@@ -1,70 +1,110 @@
-import { useState, useRef } from "react";
+import { useState, useEffect } from "react";
+import { onAuthStateChanged } from "firebase/auth";
+import { ref, onValue } from "firebase/database";
+import { auth } from "./firebase";
+import database from "./firebase";
 import Navbar from "./components/Navbar";
 import NearbyButton from "./components/NearbyButton";
-import MapView from "./components/MapView";
 import ParkingList from "./components/ParkingList";
-import "./index.css";
+import ParkingDetail from "./components/ParkingDetail";
+// eslint-disable-next-line no-unused-vars
+import { AnimatePresence, motion } from "framer-motion";
 
 function App() {
-  const [hasLocationConsent, setHasLocationConsent] = useState(false);
-  const [showTerms, setShowTerms] = useState(false);
-  const mapRef = useRef(null);
+  const [userLoc, setUserLoc] = useState(null);
+  const [errorMsg, setErrorMsg] = useState("");
+  const [selectedSlot, setSelectedSlot] = useState(null);
+  const [isSearching, setIsSearching] = useState(false);
+  const [currentUser, setCurrentUser] = useState(null);
+  const [walletBalance, setWalletBalance] = useState(0);
 
-  const handleButtonClick = () => {
-    if (hasLocationConsent) {
-      if (mapRef.current) {
-        mapRef.current.scrollIntoView({ behavior: "smooth" });
+  // Auth Listener
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      if (user) {
+        setCurrentUser(user);
+        // Fetch User Data (Wallet)
+        const userRef = ref(database, `users/${user.uid}`);
+        onValue(userRef, (snapshot) => {
+          const data = snapshot.val();
+          if (data && data.walletBalance) {
+            setWalletBalance(data.walletBalance);
+          }
+        });
+      } else {
+        setCurrentUser(null);
+        setWalletBalance(0);
       }
-    } else {
-      setShowTerms(true);
-    }
-  };
+    });
+    return () => unsubscribe();
+  }, []);
 
-  const handleConsent = (consent) => {
-    setHasLocationConsent(consent);
-    setShowTerms(false);
-    if (consent && mapRef.current) {
-      mapRef.current.scrollIntoView({ behavior: "smooth" });
+  const getGeolocation = () => {
+    setIsSearching(true);
+    if (!navigator.geolocation) {
+      setErrorMsg("Geolocation not supported by your browser.");
+      return;
     }
+
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setUserLoc({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+        setIsSearching(false);
+      },
+      () => {
+        setErrorMsg("Cant get location. Please check permissions or move to a different area.");
+        setIsSearching(false);
+      },
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+    );
   };
 
   return (
-    <div className="min-h-screen w-full bg-slate-100 flex flex-col">
-      <Navbar />
-      <div className="flex justify-center mt-10">
-        <NearbyButton onClick={handleButtonClick} />
-      </div>
-      <main className="flex-1 overflow-y-auto">
-        <div className="w-full px-4 md:px-10 mt-6" ref={mapRef}>
-          <MapView />
-          <ParkingList />
-        </div>
-      </main>
+    <div className="min-h-screen w-full bg-[radial-gradient(circle_at_top,_#f8fafc,_#eff6ff)] text-slate-900 font-sans selection:bg-blue-100 overflow-x-hidden">
+      <Navbar currentUser={currentUser} walletBalance={walletBalance} />
 
-      {showTerms && (
-        <div className="fixed inset-0 bg-gray-900 bg-opacity-50 flex items-center justify-center">
-          <div className="bg-white rounded-lg p-8 max-w-md mx-auto">
-            <h2 className="text-2xl font-semibold mb-4">Location Access Required</h2>
-            <p className="mb-6">
-              To find the nearest parking spots, we need access to your current location. Please agree to share your location to use this feature.
-            </p>
-            <div className="flex justify-between">
-              <button
-                onClick={() => handleConsent(true)}
-                className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-500"
-              >
-                Agree
-              </button>
-              <button
-                onClick={() => handleConsent(false)}
-                className="bg-gray-300 text-gray-800 px-4 py-2 rounded-md hover:bg-gray-400"
-              >
-                Deny
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <main className="max-w-6xl mx-auto p-6 pt-24">
+        <AnimatePresence mode="wait">
+          {!selectedSlot ? (
+            <motion.div
+              key="home"
+              initial={{ opacity: 0, x: -20 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -20 }}
+              transition={{ duration: 0.3 }}
+            >
+              <div className="flex flex-col items-center justify-center py-10 text-center">
+                <NearbyButton onClick={getGeolocation} loading={isSearching} />
+                {errorMsg && (
+                  <div className="mt-6 bg-red-500/10 backdrop-blur-md border border-red-500/20 text-red-600 px-6 py-3 rounded-2xl font-medium">
+                    {errorMsg}
+                  </div>
+                )}
+              </div>
+
+              {userLoc && (
+                <div className="mt-10">
+                  <ParkingList userLoc={userLoc} onSelect={setSelectedSlot} />
+                </div>
+              )}
+            </motion.div>
+          ) : (
+            <motion.div
+              key="detail"
+              initial={{ opacity: 0, x: 20 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: 20 }}
+              transition={{ duration: 0.3 }}
+            >
+              <ParkingDetail
+                slot={selectedSlot}
+                onBack={() => setSelectedSlot(null)}
+                currentUser={currentUser}
+              />
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </main>
     </div>
   );
 }
