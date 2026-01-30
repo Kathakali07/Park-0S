@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { GoogleMap, Marker, useJsApiLoader } from "@react-google-maps/api";
 import { ArrowLeft, Navigation, Star, IndianRupee, AlertTriangle, ShieldCheck, Clock, CheckCircle, QrCode } from "lucide-react";
-import { update, ref, set, onValue } from "firebase/database";
+import { update, ref, set, onValue, get } from "firebase/database";
 import database from "../firebase";
 import QRModal from "./QRModal"; // Ensure this is imported
 
@@ -149,12 +149,28 @@ const ParkingDetail = ({ slot, onBack, currentUser, onShowGrid }) => {
         // Prefer gateway-calculated totalDue if available
         const amount = activeSession.totalDue || Math.ceil(Math.ceil((Date.now() - activeSession.startTime) / 3600000) * rate);
 
-        if (!window.confirm(`Confirm Payment of ₹${amount} for parking duration?`)) return;
+        // Check wallet balance
+        const userRef = ref(database, `users/${currentUser.uid}`);
+        const userSnapshot = await get(userRef);
+        const currentBalance = userSnapshot.val()?.walletBalance || 0;
+
+        if (currentBalance < amount) {
+            alert(`Insufficient balance! You need ₹${amount} but have only ₹${currentBalance}. Please add balance.`);
+            return;
+        }
+
+        if (!window.confirm(`Confirm Payment of ₹${amount} for parking duration?\nWallet will be debited.`)) return;
 
         try {
             const now = Date.now();
             const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
             const exitQR = `${currentUser.uid}|EXIT|${now}|${today}`;
+
+            // Deduct from wallet
+            const newBalance = currentBalance - amount;
+            await update(userRef, {
+                walletBalance: newBalance
+            });
 
             // Mark payment as SUCCESS and store exit QR
             await update(ref(database, `active_sessions/${currentUser.uid}`), {
@@ -169,7 +185,7 @@ const ParkingDetail = ({ slot, onBack, currentUser, onShowGrid }) => {
             setQrTitle("Exit QR Code - Show at Gate");
             setShowQR(true);
 
-            alert("Payment successful! Show exit QR at gate.");
+            alert(`Payment successful! ₹${amount} debited. New balance: ₹${newBalance}\n\nShow exit QR at gate.`);
 
         } catch (error) {
             console.error("Payment failed:", error);
